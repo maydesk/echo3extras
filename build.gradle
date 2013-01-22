@@ -1,0 +1,94 @@
+apply plugin: 'java'
+apply plugin: 'maven'
+
+group = 'org.maydesk'
+sourceCompatibility = JavaVersion.VERSION_1_4
+def cloudbeesAccountName = 'maydesk'
+def cloudbeesUsername = 'maydesk-deploy'
+def cloudbeesPassword = 'secret111'
+
+configurations {
+	deployerJars
+	testCompile
+}
+
+sourceSets {
+	main {
+		java {
+			srcDir 'src/server-java/app'
+			srcDir 'src/server-java/webcontainer'
+		}
+	}
+	
+	test {
+		java {
+			srcDir 'src/server-java/app-test'
+		}
+	}
+}
+
+repositories {
+	mavenCentral()
+	maven {
+		url "http://repository-maydesk.forge.cloudbees.com/snapshot"
+	}
+}
+
+dependencies {
+	compile 'org.maydesk:echo3-app:3.0-SNAPSHOT'
+	compile 'org.maydesk:echo3-webcontainer:3.0-SNAPSHOT'
+	compile "javax.servlet:servlet-api:2.+"
+	testCompile "junit:junit:4.11"
+	deployerJars 'org.apache.maven.wagon:wagon-webdav:1.0-beta-2'
+	deployerJars 'org.apache.maven:maven-ant-tasks:2.1.0'
+}
+
+ant.importBuild 'gradleWrapper.xml'
+
+// Ant build file needs the varialbes to point to the correct location
+// It's a bit of a hack. But works well for now. If a full migration is done this won't be needed
+ant.properties['servlet.lib.jar'] = configurations.compile.asPath
+ant.properties['echo3.app.lib.jar'] = configurations.compile.asPath
+ant.properties['echo3.webcontainer.lib.jar'] = configurations.compile.asPath
+
+defaultTasks 'uploadArchives'
+
+clean.dependsOn 'ant.clean'
+uploadArchives.dependsOn 'ant.dist'
+
+def extrasApp = ant.properties['jarfile.extras.app']
+def echoExtrasAppFile = file(ant.properties['dir.dist.lib'] + '/' + extrasApp)
+
+def extrasWebcontainer = ant.properties['jarfile.extras.webcontainer'] 
+def echoExtrasWebContainerFile = file(ant.properties['dir.dist.lib'] + '/' + extrasWebcontainer)
+
+extrasApp = extrasApp.substring(0, extrasApp.length() - 4)
+extrasWebcontainer = extrasWebcontainer.substring(0, extrasWebcontainer.length() - 4)
+
+artifacts {
+	archives file: echoExtrasAppFile, name: extrasApp, type: 'jar'
+	archives file: echoExtrasWebContainerFile, name: extrasWebcontainer, type: 'jar'
+}
+
+uploadArchives {
+	repositories {
+		mavenDeployer {
+			configuration = configurations.deployerJars
+			snapshotRepository(url:"dav:https://repository-${cloudbeesAccountName}.forge.cloudbees.com/snapshot/") {
+				authentication(userName: cloudbeesUsername, password: cloudbeesPassword)
+			}
+			repository(url: "dav:https://repository-${cloudbeesAccountName}.forge.cloudbees.com/release/") {
+				authentication(userName: cloudbeesUsername, password: cloudbeesPassword)
+			}
+			addFilter(extrasApp) {artifact, file ->
+				artifact.name == extrasApp
+			}
+			addFilter(extrasWebcontainer) {artifact, file ->
+				artifact.name == extrasWebcontainer
+			}
+			
+			pom(extrasApp).version = ant.properties['release.version']
+			pom(extrasWebcontainer).version = ant.properties['release.version']
+		}
+	}
+}
